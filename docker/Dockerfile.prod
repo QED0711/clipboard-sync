@@ -1,0 +1,17 @@
+FROM golang:1-bookworm AS builder
+
+WORKDIR /app 
+COPY . /app
+
+RUN go get && /app/scripts/build.sh
+
+FROM golang:1-alpine
+
+# --build-arg TARGETARCH=arm64 or TARGETARCH=x86
+ARG TARGETARCH
+
+WORKDIR /app
+COPY --from=builder /app/dist/linux/${TARGETARCH}/clipboard-sync /app/clipboard-sync
+RUN ls -l /app
+
+ENTRYPOINT [ "/app/clipboard-sync" ]
