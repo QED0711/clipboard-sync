@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -10,32 +11,46 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var (
+	lastModTime time.Time
+	clip        string
+)
+
 type LocalClient struct {
-	mu        sync.Mutex
-	Conn      *websocket.Conn
-	Clipboard string
-	debug     bool
+	mu                sync.Mutex
+	Conn              *websocket.Conn
+	Clipboard         string
+	ClipboardFilePath string
+	debug             bool
 }
 
-func CreateLocalClient(url string, interval time.Duration, debug bool) *LocalClient {
+func CreateLocalClient(url string, interval time.Duration, clipboardFile string, debug bool) *LocalClient {
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		log.Fatalf("Dial to %s failed: %v\n", url, err)
 	}
 
-	var currentClip string
-	currentClip, err = clipboard.ReadAll()
-	if err != nil {
-		currentClip = ""
-	}
+	currentClip := ""
 
 	client := &LocalClient{
-		mu:        sync.Mutex{},
-		Conn:      conn,
-		Clipboard: currentClip,
-		debug:     debug,
+		mu:                sync.Mutex{},
+		Conn:              conn,
+		Clipboard:         currentClip,
+		ClipboardFilePath: clipboardFile,
+		debug:             debug,
 	}
 
+	if clipboardFile != "" {
+		fileContents, _, _ := client.CheckClipboardFile()
+		currentClip = fileContents
+	} else {
+		currentClip, err = clipboard.ReadAll()
+		if err != nil {
+			currentClip = ""
+		}
+	}
+
+	client.Clipboard = currentClip
 	client.CheckClipboard(interval)
 
 	return client
@@ -50,25 +65,41 @@ func (lc *LocalClient) CheckClipboard(interval time.Duration) {
 	go func() {
 		defer close(done)
 		for {
+			clipboardChanged := false
+			// Determine which method is to be used to read clipboard
+			if lc.ClipboardFilePath != "" {
+				clip, changed, err := lc.CheckClipboardFile()
+				if err != nil {
+					log.Println("Failed to read clipboard file: ", err)
+					time.Sleep(interval * time.Millisecond)
+					continue
+				}
+				if changed && clip != lc.Clipboard {
+					lc.Clipboard = clip
+					clipboardChanged = true
+				}
+			} else {
+				clip, err := clipboard.ReadAll()
+				if err != nil {
+					log.Println("Failed to read clipboard: ", err)
+					time.Sleep(interval * time.Millisecond)
+					continue
+				}
+				if clip != lc.Clipboard {
+					lc.Clipboard = clip
+					clipboardChanged = true
+				}
 
-			clip, err := clipboard.ReadAll()
-			if err != nil {
-				log.Println("Failed to read clipboard: ", err)
-				time.Sleep(interval * time.Millisecond)
-				continue
 			}
 
 			lc.mu.Lock()
-			if clip != lc.Clipboard {
-				// fmt.Println("Clipboard changed: ", clip)
-				lc.Clipboard = clip
-
+			if clipboardChanged {
 				// Format server request
 				postReq := Request{
 					Type: MessageType.POST,
 					Message: RegistryMessage{
 						Name: "default",
-						Data: clip,
+						Data: lc.Clipboard,
 					},
 				}
 				jsonReq, err := json.Marshal(postReq)
@@ -88,6 +119,25 @@ func (lc *LocalClient) CheckClipboard(interval time.Duration) {
 			time.Sleep(interval * time.Millisecond)
 		}
 	}()
+}
+
+func (lc *LocalClient) CheckClipboardFile() (string, bool, error) {
+	if lc.ClipboardFilePath == "" {
+		return "", false, nil
+	}
+	fi, err := os.Stat(lc.ClipboardFilePath)
+	if err != nil {
+		return "", false, err
+	}
+	if fi.ModTime().After(lastModTime) {
+		lastModTime = fi.ModTime()
+		data, err := os.ReadFile(lc.ClipboardFilePath)
+		if err != nil {
+			return "", false, err
+		}
+		return string(data), true, nil
+	}
+	return "", false, nil
 }
 
 func (lc *LocalClient) HandleMessage() {

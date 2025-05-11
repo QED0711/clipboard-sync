@@ -15,6 +15,7 @@ var (
 	serverUrl         = flag.String("url", "ws://localhost:8000", "The url of the server (only needed when mode = `client`)")
 	clipboardInterval = flag.Int("interval", 1000, "The polling interval in MS that checks for local clipboard updates")
 	debug             = flag.Bool("debug", false, "Show debugging messages")
+	clipboardFile     = flag.String("clipboard-file", "", "Path to an optional file to read instead of the clipboard")
 )
 
 func main() {
@@ -26,7 +27,7 @@ func main() {
 		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *serverPort), nil))
 	} else if *mode == "client" {
 		log.Printf("Attempting to connect to  %s", *serverUrl)
-		localClient := utils.CreateLocalClient(*serverUrl, time.Duration(*clipboardInterval), *debug)
+		localClient := utils.CreateLocalClient(*serverUrl, time.Duration(*clipboardInterval), *clipboardFile, *debug)
 		defer localClient.Conn.Close()
 		localClient.HandleMessage()
 	}
