@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -140,6 +141,25 @@ func (lc *LocalClient) CheckClipboardFile() (string, bool, error) {
 	return "", false, nil
 }
 
+func (lc *LocalClient) WriteToClipboardFile(text string) error {
+	if lc.ClipboardFilePath == "" {
+		return fmt.Errorf("Clipboard file path is not set")
+	}
+
+	f, err := os.OpenFile(lc.ClipboardFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open clipboard file: %w", err)
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(text)
+	if err != nil {
+		return fmt.Errorf("failed to write to clipboard file: %w", err)
+	}
+
+	return nil
+}
+
 func (lc *LocalClient) HandleMessage() {
 	lc.mu.Lock()
 	getReq, _ := json.Marshal(Request{
@@ -155,11 +175,21 @@ func (lc *LocalClient) HandleMessage() {
 			log.Println("Read Error: ", err)
 			return
 		}
-		err = clipboard.WriteAll(string(message))
-		if err != nil {
-			log.Println("Failed to write to clipboard: ", err)
-			continue
+
+		if lc.ClipboardFilePath != "" {
+			err = lc.WriteToClipboardFile(string(message))
+			if err != nil {
+				log.Println("Failed to write to clipboard: ", err)
+				continue
+			}
+		} else {
+			err = clipboard.WriteAll(string(message))
+			if err != nil {
+				log.Println("Failed to write to clipboard: ", err)
+				continue
+			}
 		}
+
 		if lc.debug {
 			log.Printf("Updated clipboard to: %s\n", message)
 		}
